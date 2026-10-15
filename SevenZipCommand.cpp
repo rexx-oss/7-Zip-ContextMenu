@@ -63,7 +63,7 @@ DWORD Read7ZipConfiguredFlags() {
 DWORD ReadInstalledHashMask() {
     DWORD mask = 0x1F; // Default all 5 enabled
     HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7zip-contextmenu", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7-Zip-ContextMenu", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         DWORD data = 0;
         DWORD size = sizeof(data);
         if (RegQueryValueExW(hKey, L"HashMask", nullptr, nullptr, (LPBYTE)&data, &size) == ERROR_SUCCESS) {
@@ -124,7 +124,7 @@ public:
     }
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
         if (!pFlags) return E_POINTER;
-        *pFlags = ECF_ISSEPARATOR;
+        *pFlags = ECF_ISSEPARATOR; // Renders the horizontal separating bar
         return S_OK;
     }
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override { if (ppEnum) *ppEnum = nullptr; return E_NOTIMPL; }
