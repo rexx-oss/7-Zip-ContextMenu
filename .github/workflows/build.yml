@@ -1,4 +1,4 @@
-name: Build 7-Zip-ContextMenu Package
+name: Build 7zip-contextmenu Package
 
 on:
   workflow_dispatch:
@@ -46,30 +46,30 @@ jobs:
           $bmp.Dispose()
           $icon.Dispose()
 
-          # Certificate
+          # Certificate named "7zip-contextmenu"
           $cert = New-SelfSignedCertificate -Type Custom `
-            -Subject "CN=7-Zip-ContextMenu" `
+            -Subject "CN=7zip-contextmenu" `
             -KeyUsage DigitalSignature `
-            -FriendlyName "7-Zip-ContextMenu" `
+            -FriendlyName "7zip-contextmenu" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
             -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
 
           $certBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
-          [System.IO.File]::WriteAllBytes("staging/7-Zip-ContextMenu.cer", $certBytes)
+          [System.IO.File]::WriteAllBytes("staging/7zip-contextmenu.cer", $certBytes)
 
           $kitBin = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64" | Select-Object -Last 1).FullName
           & "$kitBin\makeappx.exe" pack /d staging /p staging/SevenZipMenu.msix /nv
-          & "$kitBin\signtool.exe" sign /fd SHA256 /a /s My /n "7-Zip-ContextMenu" staging/SevenZipMenu.msix
+          & "$kitBin\signtool.exe" sign /fd SHA256 /a /s My /n "7zip-contextmenu" staging/SevenZipMenu.msix
 
       - name: Bundle Release Zip
         shell: powershell
         run: |
           Copy-Item install.ps1 staging/
           Copy-Item uninstall.ps1 staging/
-          Compress-Archive -Path staging/* -DestinationPath 7-Zip-ContextMenu.zip
+          Compress-Archive -Path staging/* -DestinationPath 7zip-contextmenu.zip
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 7-Zip-ContextMenu
-          path: 7-Zip-ContextMenu.zip
+          name: 7zip-contextmenu
+          path: 7zip-contextmenu.zip
