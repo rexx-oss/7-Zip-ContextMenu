@@ -16,6 +16,7 @@
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
 
+// Exact 7-Zip internal ContextMenuFlags bitmask from 7-Zip source code
 namespace N7zFlags {
     const UINT32 kExtract     = 1 << 0;  // Extract files...
     const UINT32 kExtractHere = 1 << 1;  // Extract Here
@@ -124,13 +125,14 @@ public:
     }
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
         if (!pFlags) return E_POINTER;
-        *pFlags = ECF_ISSEPARATOR; // Renders the horizontal separating bar
+        *pFlags = ECF_ISSEPARATOR;
         return S_OK;
     }
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override { if (ppEnum) *ppEnum = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { return S_OK; }
 };
 
+// Standard Command Item
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
@@ -231,12 +233,14 @@ public:
             args = L"x -ad -- \"" + targetPath + L"\"";
             break;
         case ACTION_EXTRACT_HERE:
+            // Explicit output directory, no -y so overwrite/collision prompts appear
             exe = guiExe;
-            args = L"x -spe -y -- \"" + targetPath + L"\"";
+            args = L"x -o\"" + std::wstring(parentDir) + L"\" -- \"" + targetPath + L"\"";
             break;
         case ACTION_EXTRACT_TO_FOLDER:
+            // Explicit output directory, no -y so overwrite/collision prompts appear
             exe = guiExe;
-            args = L"x -o\"" + std::wstring(parentDir) + L"\\" + baseName + L"\\\" -spe -y -- \"" + targetPath + L"\"";
+            args = L"x -o\"" + std::wstring(parentDir) + L"\\" + baseName + L"\\\" -- \"" + targetPath + L"\"";
             break;
         case ACTION_TEST:
             exe = guiExe;
@@ -410,7 +414,7 @@ public:
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (!pguid) return E_POINTER; *pguid = CLSID_SevenZipCommand; return S_OK; }
 
-    // HIDES FROM CLASSIC CONTEXT MENU
+    // Hides from classic context menu (fOkToBeSlow == FALSE is classic menu)
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState) override {
         if (!pCmdState) return E_POINTER;
         if (!fOkToBeSlow) {
