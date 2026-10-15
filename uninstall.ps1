@@ -16,7 +16,10 @@ foreach ($cert in $certs) {
 }
 $rootStore.Close()
 
-Write-Host "3. Restarting Explorer..." -ForegroundColor Cyan
+Write-Host "3. Removing Configuration Keys..." -ForegroundColor Cyan
+reg delete "HKCU\Software\7-Zip-ContextMenu" /f 2>$null
+
+Write-Host "4. Restarting Explorer..." -ForegroundColor Cyan
 taskkill /f /im explorer.exe 2>$null
 Start-Process explorer.exe
 
