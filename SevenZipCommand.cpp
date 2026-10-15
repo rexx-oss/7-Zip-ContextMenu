@@ -16,7 +16,6 @@
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
 
-// Exact 7-Zip internal ContextMenuFlags bitmask from 7-Zip source code
 namespace N7zFlags {
     const UINT32 kExtract     = 1 << 0;  // Extract files...
     const UINT32 kExtractHere = 1 << 1;  // Extract Here
@@ -64,7 +63,7 @@ DWORD Read7ZipConfiguredFlags() {
 DWORD ReadInstalledHashMask() {
     DWORD mask = 0x1F; // Default all 5 enabled
     HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7-Zip-ContextMenu", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7zip-contextmenu", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         DWORD data = 0;
         DWORD size = sizeof(data);
         if (RegQueryValueExW(hKey, L"HashMask", nullptr, nullptr, (LPBYTE)&data, &size) == ERROR_SUCCESS) {
@@ -125,14 +124,13 @@ public:
     }
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
         if (!pFlags) return E_POINTER;
-        *pFlags = ECF_ISSEPARATOR; // Renders the horizontal separating bar
+        *pFlags = ECF_ISSEPARATOR;
         return S_OK;
     }
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override { if (ppEnum) *ppEnum = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { return S_OK; }
 };
 
-// Standard Command Item
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
