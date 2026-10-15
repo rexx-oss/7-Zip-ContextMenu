@@ -4,7 +4,6 @@
 #include <shellapi.h>
 #include <string>
 #include <vector>
-#include <algorithm>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -14,7 +13,17 @@
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
 
-// Locate 7-Zip installation directory
+enum SevenZipAction {
+    ACTION_OPEN,
+    ACTION_EXTRACT_FILES,
+    ACTION_EXTRACT_HERE,
+    ACTION_EXTRACT_TO_FOLDER,
+    ACTION_TEST,
+    ACTION_ADD_FILES,
+    ACTION_ADD_7Z,
+    ACTION_ADD_ZIP
+};
+
 std::wstring Get7ZipPath(const std::wstring& exeName) {
     WCHAR path[MAX_PATH] = L"C:\\Program Files\\7-Zip\\";
     std::wstring full = std::wstring(path) + exeName;
@@ -22,19 +31,17 @@ std::wstring Get7ZipPath(const std::wstring& exeName) {
     return L"C:\\Program Files (x86)\\7-Zip\\" + exeName;
 }
 
-// Child Command Implementation
+// Child Subcommand
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
+    SevenZipAction m_action;
     std::wstring m_title;
-    std::wstring m_exe;
-    std::wstring m_args;
-    std::wstring m_workDir;
     EXPCMDSTATE m_state;
 
 public:
-    SevenZipChildCommand(const std::wstring& title, const std::wstring& exe, const std::wstring& args, const std::wstring& workDir, EXPCMDSTATE state)
-        : m_title(title), m_exe(exe), m_args(args), m_workDir(workDir), m_state(state) {}
+    SevenZipChildCommand(SevenZipAction action, const std::wstring& title, EXPCMDSTATE state)
+        : m_action(action), m_title(title), m_state(state) {}
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
         static const QITAB qit[] = {
@@ -65,8 +72,76 @@ public:
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override { if (!pFlags) return E_POINTER; *pFlags = ECF_DEFAULT; return S_OK; }
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override { if (ppEnum) *ppEnum = nullptr; return E_NOTIMPL; }
 
-    IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override {
-        ShellExecuteW(nullptr, L"open", m_exe.c_str(), m_args.c_str(), m_workDir.empty() ? nullptr : m_workDir.c_str(), SW_SHOWNORMAL);
+    IFACEMETHODIMP Invoke(IShellItemArray* psiItemArray, IBindCtx*) override {
+        if (!psiItemArray) return S_OK;
+
+        DWORD count = 0;
+        psiItemArray->GetCount(&count);
+        if (count == 0) return S_OK;
+
+        IShellItem* item = nullptr;
+        if (FAILED(psiItemArray->GetItemAt(0, &item))) return S_OK;
+
+        PWSTR rawPath = nullptr;
+        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath))) {
+            item->Release();
+            return S_OK;
+        }
+
+        std::wstring targetPath = rawPath;
+        CoTaskMemFree(rawPath);
+        item->Release();
+
+        WCHAR parentDir[MAX_PATH] = { 0 };
+        wcscpy_s(parentDir, targetPath.c_str());
+        PathRemoveFileSpecW(parentDir);
+
+        LPCWSTR fileName = PathFindFileNameW(targetPath.c_str());
+        WCHAR baseName[MAX_PATH] = { 0 };
+        wcscpy_s(baseName, fileName);
+        PathRemoveExtensionW(baseName);
+
+        std::wstring fmExe = Get7ZipPath(L"7zFM.exe");
+        std::wstring guiExe = Get7ZipPath(L"7zG.exe");
+        std::wstring exe;
+        std::wstring args;
+
+        switch (m_action) {
+        case ACTION_OPEN:
+            exe = fmExe;
+            args = L"\"" + targetPath + L"\"";
+            break;
+        case ACTION_EXTRACT_FILES:
+            exe = guiExe;
+            args = L"x -ad -- \"" + targetPath + L"\"";
+            break;
+        case ACTION_EXTRACT_HERE:
+            exe = guiExe;
+            args = L"x -spe -y -- \"" + targetPath + L"\"";
+            break;
+        case ACTION_EXTRACT_TO_FOLDER:
+            exe = guiExe;
+            args = L"x -o\"" + std::wstring(parentDir) + L"\\" + baseName + L"\\\" -spe -y -- \"" + targetPath + L"\"";
+            break;
+        case ACTION_TEST:
+            exe = guiExe;
+            args = L"t -- \"" + targetPath + L"\"";
+            break;
+        case ACTION_ADD_FILES:
+            exe = guiExe;
+            args = L"a -ad -- \"" + targetPath + L"\"";
+            break;
+        case ACTION_ADD_7Z:
+            exe = guiExe;
+            args = L"a -t7z \"" + std::wstring(parentDir) + L"\\" + baseName + L".7z\" -- \"" + targetPath + L"\"";
+            break;
+        case ACTION_ADD_ZIP:
+            exe = guiExe;
+            args = L"a -tzip \"" + std::wstring(parentDir) + L"\\" + baseName + L".zip\" -- \"" + targetPath + L"\"";
+            break;
+        }
+
+        ShellExecuteW(nullptr, L"open", exe.c_str(), args.c_str(), parentDir, SW_SHOWNORMAL);
         return S_OK;
     }
 };
@@ -80,54 +155,23 @@ class SevenZipEnumCommands : public IEnumExplorerCommand
 
 public:
     SevenZipEnumCommands(const std::wstring& targetPath) {
-        if (targetPath.empty()) return;
-
-        WCHAR parentDir[MAX_PATH] = { 0 };
-        wcscpy_s(parentDir, targetPath.c_str());
-        PathRemoveFileSpecW(parentDir);
-
+        LPCWSTR ext = PathFindExtensionW(targetPath.c_str());
+        BOOL isDir = targetPath.empty() ? FALSE : PathIsDirectoryW(targetPath.c_str());
+        
         LPCWSTR fileName = PathFindFileNameW(targetPath.c_str());
         WCHAR baseName[MAX_PATH] = { 0 };
         wcscpy_s(baseName, fileName);
         PathRemoveExtensionW(baseName);
 
-        LPCWSTR ext = PathFindExtensionW(targetPath.c_str());
-        std::wstring extLower = ext;
-        std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::towlower);
-
-        BOOL isDir = PathIsDirectoryW(targetPath.c_str());
-        
-        // Known archive extensions
-        static const std::vector<std::wstring> archiveExts = {
-            L".7z", L".zip", L".rar", L".001", L".cab", L".iso", L".tar", L".gz",
-            L".tgz", L".bz2", L".tbz2", L".xz", L".txz", L".wim", L".dmg", L".vhd"
-        };
-        BOOL isArchive = !isDir && (std::find(archiveExts.begin(), archiveExts.end(), extLower) != archiveExts.end());
-        EXPCMDSTATE extractState = isArchive ? ECS_ENABLED : ECS_HIDDEN;
-
-        std::wstring fmExe = Get7ZipPath(L"7zFM.exe");
-        std::wstring guiExe = Get7ZipPath(L"7zG.exe");
-
-        // 1. Open archive
-        m_commands.push_back(new SevenZipChildCommand(L"Open archive", fmExe, L"\"" + targetPath + L"\"", parentDir, extractState));
-        // 2. Extract files...
-        m_commands.push_back(new SevenZipChildCommand(L"Extract files...", guiExe, L"x \"" + targetPath + L"\"", parentDir, extractState));
-        // 3. Extract Here
-        m_commands.push_back(new SevenZipChildCommand(L"Extract Here", guiExe, L"x \"" + targetPath + L"\" -spe", parentDir, extractState));
-        // 4. Extract to <name>\ 
-        std::wstring extractToFolder = std::wstring(parentDir) + L"\\" + baseName + L"\\";
-        m_commands.push_back(new SevenZipChildCommand(L"Extract to \"" + std::wstring(baseName) + L"\\\"", guiExe, L"x \"" + targetPath + L"\" -o\"" + extractToFolder + L"\"", parentDir, extractState));
-        // 5. Test archive
-        m_commands.push_back(new SevenZipChildCommand(L"Test archive", guiExe, L"t \"" + targetPath + L"\"", parentDir, extractState));
-
-        // 6. Add to archive...
-        m_commands.push_back(new SevenZipChildCommand(L"Add to archive...", guiExe, L"a \"" + targetPath + L"\"", parentDir, ECS_ENABLED));
-        // 7. Add to <name>.7z
-        std::wstring out7z = std::wstring(parentDir) + L"\\" + baseName + L".7z";
-        m_commands.push_back(new SevenZipChildCommand(L"Add to \"" + std::wstring(baseName) + L".7z\"", guiExe, L"a -t7z \"" + out7z + L"\" \"" + targetPath + L"\"", parentDir, ECS_ENABLED));
-        // 8. Add to <name>.zip
-        std::wstring outZip = std::wstring(parentDir) + L"\\" + baseName + L".zip";
-        m_commands.push_back(new SevenZipChildCommand(L"Add to \"" + std::wstring(baseName) + L".zip\"", guiExe, L"a -tzip \"" + outZip + L"\" \"" + targetPath + L"\"", parentDir, ECS_ENABLED));
+        // Always provide the base commands
+        m_commands.push_back(new SevenZipChildCommand(ACTION_OPEN, L"Open archive", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_FILES, L"Extract files...", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to \"" + std::wstring(baseName.length() ? baseName : L"folder") + L"\\\"", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_TEST, L"Test archive", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_FILES, L"Add to archive...", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to \"" + std::wstring(baseName.length() ? baseName : L"archive") + L".7z\"", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to \"" + std::wstring(baseName.length() ? baseName : L"archive") + L".zip\"", ECS_ENABLED));
     }
 
     ~SevenZipEnumCommands() {
@@ -239,7 +283,6 @@ public:
         *pCmdState = ECS_ENABLED;
         return S_OK;
     }
-    // ECF_HASSUBCOMMANDS tells Windows 11 this item has a cascading submenu
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
         if (!pFlags) return E_POINTER;
         *pFlags = ECF_HASSUBCOMMANDS;
