@@ -10,6 +10,7 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "user32.lib")
 
 // CLSID: {7B8933A1-1372-4BD1-9F25-8B27357F7E64}
 static const CLSID CLSID_SevenZipCommand = 
@@ -21,7 +22,7 @@ enum SevenZipMenuBit {
     BIT_OPEN_ARCHIVE_SUB   = (1 << 1),  // Open archive >
     BIT_EXTRACT_FILES      = (1 << 2),  // Extract files...
     BIT_EXTRACT_HERE       = (1 << 3),  // Extract Here
-    BIT_EXTRACT_TO_FOLDER  = (1 << 4),  // Extract to <Folder>
+    BIT_EXTRACT_TO_FOLDER  = (1 << 4),  // Extract to folder
     BIT_TEST_ARCHIVE       = (1 << 5),  // Test archive
     BIT_ADD_TO_ARCHIVE     = (1 << 6),  // Add to archive...
     BIT_ADD_TO_7Z          = (1 << 7),  // Add to <Archive>.7z
@@ -220,7 +221,7 @@ public:
         if (userFlags & BIT_EXTRACT_HERE)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here", ECS_ENABLED));
 
-        // 4. Extract to <Folder>\
+        // 4. Extract to folder (no trailing backslash in comment)
         if (userFlags & BIT_EXTRACT_TO_FOLDER)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to \"" + strBase + L"\\\"", ECS_ENABLED));
 
