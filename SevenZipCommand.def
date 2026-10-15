@@ -1,0 +1,4 @@
+LIBRARY SevenZipCommand
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow   PRIVATE
