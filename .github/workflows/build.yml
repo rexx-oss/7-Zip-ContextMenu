@@ -1,8 +1,6 @@
 name: Build 7-Zip Modern Context Menu Package
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -18,10 +16,10 @@ jobs:
 
       - name: Compile Cascading COM DLL
         run: |
-          cl.exe /LD /O2 /EHsc SevenZipCommand.cpp /link /DEF:SevenZipCommand.def /OUT:SevenZipCommand.dll shlwapi.lib shell32.lib ole32.lib
+          cl.exe /LD /O2 /EHsc SevenZipCommand.cpp /link /DEF:SevenZipCommand.def /OUT:SevenZipCommand.dll shlwapi.lib shell32.lib ole32.lib user32.lib advapi32.lib
 
       - name: Create Clean Package Layout & Sign
-        shell: pwsh
+        shell: powershell
         run: |
           New-Item -ItemType Directory -Path staging/Assets -Force | Out-Null
           Copy-Item AppxManifest.xml staging/
@@ -34,10 +32,13 @@ jobs:
 
           $sizes = @{ "staging/Assets/Square44x44Logo.png" = 44; "staging/Assets/Square150x150Logo.png" = 150; "staging/Assets/StoreLogo.png" = 50 }
           foreach ($path in $sizes.Keys) {
-              $resized = New-Object System.Drawing.Bitmap $sizes[$path], $sizes[$path]
+              $dim = $sizes[$path]
+              $resized = New-Object System.Drawing.Bitmap $dim, $dim
               $g = [System.Drawing.Graphics]::FromImage($resized)
               $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-              $g.DrawImage($bmp, 0, 0, $sizes[$path], $sizes[$path])
+              $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+              $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+              $g.DrawImage($bmp, 0, 0, $dim, $dim)
               $g.Dispose()
               $resized.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
               $resized.Dispose()
@@ -62,7 +63,7 @@ jobs:
           & "$kitBin\signtool.exe" sign /fd SHA256 /a /s My /n "Vanilla7ZipContextMenu" staging/SevenZipMenu.msix
 
       - name: Bundle Release Zip
-        shell: pwsh
+        shell: powershell
         run: |
           Copy-Item install.ps1 staging/
           Copy-Item uninstall.ps1 staging/
