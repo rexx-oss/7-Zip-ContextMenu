@@ -9,10 +9,29 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "advapi32.lib")
 
 // CLSID: {7B8933A1-1372-4BD1-9F25-8B27357F7E64}
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
+
+// 7-Zip ContextMenu bitmask constants (matching 7-Zip Options dialog checkboxes)
+enum SevenZipMenuBit {
+    BIT_OPEN_ARCHIVE       = (1 << 0),  // Open archive
+    BIT_OPEN_ARCHIVE_SUB   = (1 << 1),  // Open archive >
+    BIT_EXTRACT_FILES      = (1 << 2),  // Extract files...
+    BIT_EXTRACT_HERE       = (1 << 3),  // Extract Here
+    BIT_EXTRACT_TO_FOLDER  = (1 << 4),  // Extract to <Folder>
+    BIT_TEST_ARCHIVE       = (1 << 5),  // Test archive
+    BIT_ADD_TO_ARCHIVE     = (1 << 6),  // Add to archive...
+    BIT_ADD_TO_7Z          = (1 << 7),  // Add to <Archive>.7z
+    BIT_ADD_TO_ZIP         = (1 << 8),  // Add to <Archive>.zip
+    BIT_EMAIL              = (1 << 9),  // Compress and email...
+    BIT_EMAIL_7Z           = (1 << 10), // Compress to <Archive>.7z and email
+    BIT_EMAIL_ZIP          = (1 << 11), // Compress to <Archive>.zip and email
+    BIT_CRC_SHA            = (1 << 12), // CRC SHA >
+    BIT_CRC_SHA_SUB        = (1 << 13)  // 7-Zip > CRC SHA >
+};
 
 enum SevenZipAction {
     ACTION_OPEN,
@@ -22,7 +41,8 @@ enum SevenZipAction {
     ACTION_TEST,
     ACTION_ADD_FILES,
     ACTION_ADD_7Z,
-    ACTION_ADD_ZIP
+    ACTION_ADD_ZIP,
+    ACTION_CRC_ALL
 };
 
 std::wstring Get7ZipPath(const std::wstring& exeName) {
@@ -32,7 +52,22 @@ std::wstring Get7ZipPath(const std::wstring& exeName) {
     return L"C:\\Program Files (x86)\\7-Zip\\" + exeName;
 }
 
-// Child Subcommand
+// Reads the exact bitmask configured in 7-Zip Options -> 7-Zip tab
+DWORD Read7ZipConfiguredFlags() {
+    DWORD flags = 0x3F37; // Default 7-Zip bitmask if not yet customized
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7-Zip\\Options", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD data = 0;
+        DWORD size = sizeof(data);
+        if (RegQueryValueExW(hKey, L"ContextMenu", nullptr, nullptr, (LPBYTE)&data, &size) == ERROR_SUCCESS) {
+            flags = data;
+        }
+        RegCloseKey(hKey);
+    }
+    return flags;
+}
+
+// Child Subcommand (Sub-items have NO icon)
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
@@ -59,10 +94,13 @@ public:
     }
 
     IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* ppszName) override { return SHStrDupW(m_title.c_str(), ppszName); }
+
+    // Removed icons from sub-items as requested
     IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* ppszIcon) override {
-        std::wstring icon = Get7ZipPath(L"7zFM.exe") + L",0";
-        return SHStrDupW(icon.c_str(), ppszIcon);
+        if (ppszIcon) *ppszIcon = nullptr;
+        return E_NOTIMPL;
     }
+
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (pguid) *pguid = GUID_NULL; return S_OK; }
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE* pCmdState) override {
@@ -140,6 +178,10 @@ public:
             exe = guiExe;
             args = L"a -tzip \"" + std::wstring(parentDir) + L"\\" + baseName + L".zip\" -- \"" + targetPath + L"\"";
             break;
+        case ACTION_CRC_ALL:
+            exe = guiExe;
+            args = L"h -- \"" + targetPath + L"\"";
+            break;
         }
 
         ShellExecuteW(nullptr, L"open", exe.c_str(), args.c_str(), parentDir, SW_SHOWNORMAL);
@@ -147,7 +189,7 @@ public:
     }
 };
 
-// Cascading Subcommands Enumerator
+// Subcommands Enumerator (Dynamically built from 7-Zip registry settings)
 class SevenZipEnumCommands : public IEnumExplorerCommand
 {
     LONG m_cRef = 1;
@@ -161,17 +203,46 @@ public:
         wcscpy_s(baseName, fileName);
         PathRemoveExtensionW(baseName);
 
-        // Fixed: clean std::wstring conversion
         std::wstring strBase = (baseName[0] != L'\0') ? baseName : L"archive";
 
-        m_commands.push_back(new SevenZipChildCommand(ACTION_OPEN, L"Open archive", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_FILES, L"Extract files...", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to \"" + strBase + L"\\\"", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_TEST, L"Test archive", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_FILES, L"Add to archive...", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to \"" + strBase + L".7z\"", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to \"" + strBase + L".zip\"", ECS_ENABLED));
+        // Read current 7-Zip settings
+        DWORD userFlags = Read7ZipConfiguredFlags();
+
+        // 1. Open archive
+        if (userFlags & BIT_OPEN_ARCHIVE)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_OPEN, L"Open archive", ECS_ENABLED));
+
+        // 2. Extract files...
+        if (userFlags & BIT_EXTRACT_FILES)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_FILES, L"Extract files...", ECS_ENABLED));
+
+        // 3. Extract Here
+        if (userFlags & BIT_EXTRACT_HERE)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here", ECS_ENABLED));
+
+        // 4. Extract to <Folder>\
+        if (userFlags & BIT_EXTRACT_TO_FOLDER)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to \"" + strBase + L"\\\"", ECS_ENABLED));
+
+        // 5. Test archive
+        if (userFlags & BIT_TEST_ARCHIVE)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_TEST, L"Test archive", ECS_ENABLED));
+
+        // 6. Add to archive...
+        if (userFlags & BIT_ADD_TO_ARCHIVE)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_FILES, L"Add to archive...", ECS_ENABLED));
+
+        // 7. Add to <Archive>.7z
+        if (userFlags & BIT_ADD_TO_7Z)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to \"" + strBase + L".7z\"", ECS_ENABLED));
+
+        // 8. Add to <Archive>.zip
+        if (userFlags & BIT_ADD_TO_ZIP)
+            m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to \"" + strBase + L".zip\"", ECS_ENABLED));
+
+        // 9. CRC SHA
+        if (userFlags & (BIT_CRC_SHA | BIT_CRC_SHA_SUB))
+            m_commands.push_back(new SevenZipChildCommand(ACTION_CRC_ALL, L"CRC SHA (*)", ECS_ENABLED));
     }
 
     ~SevenZipEnumCommands() {
@@ -214,7 +285,7 @@ public:
     IFACEMETHODIMP Clone(IEnumExplorerCommand** ppenum) override { if (ppenum) *ppenum = nullptr; return E_NOTIMPL; }
 };
 
-// Parent "7-Zip >" Command
+// Parent "7-Zip >" Command (Only this level has an icon)
 class SevenZipCommand : public IExplorerCommand, public IObjectWithSelection
 {
     LONG m_cRef = 1;
@@ -272,17 +343,42 @@ public:
     }
 
     IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* ppszName) override { return SHStrDupW(L"7-Zip", ppszName); }
+    
+    // Main item keeps the 7-Zip icon
     IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* ppszIcon) override {
         std::wstring icon = Get7ZipPath(L"7zFM.exe") + L",0";
         return SHStrDupW(icon.c_str(), ppszIcon);
     }
+
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (!pguid) return E_POINTER; *pguid = CLSID_SevenZipCommand; return S_OK; }
+
+    // Hides from the classic context menu ("Show more options")
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE* pCmdState) override {
         if (!pCmdState) return E_POINTER;
+
+        // If the classic Win32 popup menu window (#32768) is open, hide this item
+        if (FindWindowW(L"#32768", nullptr) != nullptr) {
+            *pCmdState = ECS_HIDDEN;
+            return S_OK;
+        }
+
+        // If caller is shell32.dll or windows.storage.dll (classic menu engine), hide it
+        HMODULE hCaller = nullptr;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)_ReturnAddress(), &hCaller)) {
+            WCHAR path[MAX_PATH];
+            if (GetModuleFileNameW(hCaller, path, MAX_PATH)) {
+                if (StrStrIW(path, L"shell32.dll") || StrStrIW(path, L"windows.storage.dll")) {
+                    *pCmdState = ECS_HIDDEN;
+                    return S_OK;
+                }
+            }
+        }
+
         *pCmdState = ECS_ENABLED;
         return S_OK;
     }
+
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
         if (!pFlags) return E_POINTER;
         *pFlags = ECF_HASSUBCOMMANDS;
