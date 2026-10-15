@@ -1,0 +1,75 @@
+name: Build 7-Zip Modern Context Menu Package
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile Cascading COM DLL
+        run: |
+          cl.exe /LD /O2 /EHsc SevenZipCommand.cpp /link /DEF:SevenZipCommand.def /OUT:SevenZipCommand.dll shlwapi.lib shell32.lib ole32.lib
+
+      - name: Create Clean Package Layout & Sign
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path staging/Assets -Force | Out-Null
+          Copy-Item AppxManifest.xml staging/
+          Copy-Item SevenZipCommand.dll staging/
+
+          # Extract authentic 7-Zip icon from runner's 7-Zip installation
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon("C:\Program Files\7-Zip\7zFM.exe")
+          $bmp = $icon.ToBitmap()
+
+          $sizes = @{ "staging/Assets/Square44x44Logo.png" = 44; "staging/Assets/Square150x150Logo.png" = 150; "staging/Assets/StoreLogo.png" = 50 }
+          foreach ($path in $sizes.Keys) {
+              $resized = New-Object System.Drawing.Bitmap $sizes[$path], $sizes[$path]
+              $g = [System.Drawing.Graphics]::FromImage($resized)
+              $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+              $g.DrawImage($bmp, 0, 0, $sizes[$path], $sizes[$path])
+              $g.Dispose()
+              $resized.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+              $resized.Dispose()
+          }
+          $bmp.Dispose()
+          $icon.Dispose()
+
+          # Self-signed certificate
+          $cert = New-SelfSignedCertificate -Type Custom `
+            -Subject "CN=Vanilla7ZipContextMenu" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "Vanilla 7-Zip Context Menu" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
+
+          $certBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+          [System.IO.File]::WriteAllBytes("staging/Vanilla7ZipContextMenu.cer", $certBytes)
+
+          # Package and sign
+          $kitBin = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64" | Select-Object -Last 1).FullName
+          & "$kitBin\makeappx.exe" pack /d staging /p staging/SevenZipMenu.msix /nv
+          & "$kitBin\signtool.exe" sign /fd SHA256 /a /s My /n "Vanilla7ZipContextMenu" staging/SevenZipMenu.msix
+
+      - name: Bundle Release Zip
+        shell: pwsh
+        run: |
+          Copy-Item install.ps1 staging/
+          Copy-Item uninstall.ps1 staging/
+          Compress-Archive -Path staging/* -DestinationPath Classic7ZipContext.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Classic7ZipContext
+          path: Classic7ZipContext.zip
