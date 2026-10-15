@@ -11,14 +11,14 @@
   IgnorableNamespaces="uap uap10 desktop desktop4 desktop5 com rescap">
 
   <Identity
-    Name="7-Zip-ContextMenu"
-    Publisher="CN=7-Zip-ContextMenu"
+    Name="7zip-contextmenu"
+    Publisher="CN=7zip-contextmenu"
     Version="1.0.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>7-Zip</DisplayName>
-    <PublisherDisplayName>7-Zip-ContextMenu</PublisherDisplayName>
+    <PublisherDisplayName>7zip-contextmenu</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -47,7 +47,7 @@
         <!-- In-process COM Server -->
         <com:Extension Category="windows.comServer">
           <com:ComServer>
-            <com:SurrogateServer DisplayName="7-Zip Context Menu">
+            <com:SurrogateServer DisplayName="7-Zip">
               <com:Class Id="7B8933A1-1372-4BD1-9F25-8B27357F7E64" Path="SevenZipCommand.dll" ThreadingModel="STA" />
             </com:SurrogateServer>
           </com:ComServer>
