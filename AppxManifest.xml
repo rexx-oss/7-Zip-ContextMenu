@@ -11,14 +11,14 @@
   IgnorableNamespaces="uap uap10 desktop desktop4 desktop5 com rescap">
 
   <Identity
-    Name="7zip-contextmenu"
-    Publisher="CN=7zip-contextmenu"
+    Name="7-Zip-ContextMenu"
+    Publisher="CN=7-Zip-ContextMenu"
     Version="1.0.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>7-Zip</DisplayName>
-    <PublisherDisplayName>7zip-contextmenu</PublisherDisplayName>
+    <PublisherDisplayName>7-Zip-ContextMenu</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
