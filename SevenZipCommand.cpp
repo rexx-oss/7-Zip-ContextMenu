@@ -16,6 +16,7 @@
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
 
+// Exact 7-Zip internal ContextMenuFlags bitmask from 7-Zip source code
 namespace N7zFlags {
     const UINT32 kExtract     = 1 << 0;  // Extract files...
     const UINT32 kExtractHere = 1 << 1;  // Extract Here
@@ -60,7 +61,6 @@ DWORD Read7ZipConfiguredFlags() {
     return flags;
 }
 
-// Reads user hash choices configured during installation
 DWORD ReadInstalledHashMask() {
     DWORD mask = 0x1F; // Default all 5 enabled
     HKEY hKey = nullptr;
@@ -95,6 +95,44 @@ std::wstring GetBaseNameFromItems(IShellItemArray* psiItemArray) {
     return baseName;
 }
 
+// Separator Command for Windows 11 Context Menu
+class SevenZipSeparatorCommand : public IExplorerCommand
+{
+    LONG m_cRef = 1;
+public:
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        static const QITAB qit[] = {
+            QITABENT(SevenZipSeparatorCommand, IExplorerCommand),
+            { 0 },
+        };
+        return QISearch(this, qit, riid, ppv);
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() override { return InterlockedIncrement(&m_cRef); }
+    IFACEMETHODIMP_(ULONG) Release() override {
+        LONG cRef = InterlockedDecrement(&m_cRef);
+        if (cRef == 0) delete this;
+        return cRef;
+    }
+
+    IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* ppszName) override { if (ppszName) *ppszName = nullptr; return S_OK; }
+    IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* ppszIcon) override { if (ppszIcon) *ppszIcon = nullptr; return E_NOTIMPL; }
+    IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
+    IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (pguid) *pguid = GUID_NULL; return S_OK; }
+    IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE* pCmdState) override {
+        if (!pCmdState) return E_POINTER;
+        *pCmdState = ECS_ENABLED;
+        return S_OK;
+    }
+    IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
+        if (!pFlags) return E_POINTER;
+        *pFlags = ECF_ISSEPARATOR; // Renders the horizontal separating bar
+        return S_OK;
+    }
+    IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override { if (ppEnum) *ppEnum = nullptr; return E_NOTIMPL; }
+    IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { return S_OK; }
+};
+
+// Standard Command Item
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
@@ -121,7 +159,6 @@ public:
         return cRef;
     }
 
-    // Dynamic title for folder/file names
     IFACEMETHODIMP GetTitle(IShellItemArray* psiItemArray, PWSTR* ppszName) override {
         if (m_action == ACTION_EXTRACT_TO_FOLDER || m_action == ACTION_ADD_7Z || m_action == ACTION_ADD_ZIP) {
             std::wstring baseName = GetBaseNameFromItems(psiItemArray);
@@ -230,7 +267,7 @@ public:
     }
 };
 
-// Flat Enumerator (NanaZip style flat list)
+// Flat NanaZip Style Enumerator
 class SevenZipEnumCommands : public IEnumExplorerCommand
 {
     LONG m_cRef = 1;
@@ -274,12 +311,17 @@ public:
         if (userFlags & N7zFlags::kCompressToZip)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to zip"));
 
-        // Flat CRC / SHA options (Configured during install)
-        if (hashMask & (1 << 0)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-32", L"CRC32"));
-        if (hashMask & (1 << 1)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-64", L"CRC64"));
-        if (hashMask & (1 << 2)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-1", L"SHA1"));
-        if (hashMask & (1 << 3)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-256", L"SHA256"));
-        if (hashMask & (1 << 4)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"*", L"*"));
+        // Add separating bar ONLY if at least one hash option is selected
+        bool hasAnyHash = (hashMask & 0x1F) != 0;
+        if (hasAnyHash) {
+            m_commands.push_back(new SevenZipSeparatorCommand());
+
+            if (hashMask & (1 << 0)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-32", L"CRC32"));
+            if (hashMask & (1 << 1)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-64", L"CRC64"));
+            if (hashMask & (1 << 2)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-1", L"SHA1"));
+            if (hashMask & (1 << 3)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-256", L"SHA256"));
+            if (hashMask & (1 << 4)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"*", L"*"));
+        }
     }
 
     ~SevenZipEnumCommands() {
