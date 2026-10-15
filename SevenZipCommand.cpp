@@ -16,6 +16,7 @@
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
 
+// Exact 7-Zip internal ContextMenuFlags bitmask from 7-Zip source code
 namespace N7zFlags {
     const UINT32 kExtract     = 1 << 0;  // Extract files...
     const UINT32 kExtractHere = 1 << 1;  // Extract Here
@@ -61,7 +62,7 @@ DWORD Read7ZipConfiguredFlags() {
 }
 
 DWORD ReadInstalledHashMask() {
-    DWORD mask = 0x1F;
+    DWORD mask = 0x1F; // Default all 5 enabled
     HKEY hKey = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7-Zip-ContextMenu", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         DWORD data = 0;
@@ -94,6 +95,7 @@ std::wstring GetBaseNameFromItems(IShellItemArray* psiItemArray) {
     return baseName;
 }
 
+// Separator Command for Windows 11 Context Menu
 class SevenZipSeparatorCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
@@ -130,6 +132,7 @@ public:
     IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { return S_OK; }
 };
 
+// Standard Command Item
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
@@ -227,35 +230,37 @@ public:
             break;
         case ACTION_EXTRACT_FILES:
             exe = guiExe;
-            args = L"x -ad \"" + targetPath + L"\"";
+            args = L"x -ad -- \"" + targetPath + L"\"";
             break;
         case ACTION_EXTRACT_HERE:
+            // Explicit output directory, no -y so overwrite/collision prompts appear
             exe = guiExe;
-            args = L"x \"" + targetPath + L"\"";
+            args = L"x -o\"" + std::wstring(parentDir) + L"\" -- \"" + targetPath + L"\"";
             break;
         case ACTION_EXTRACT_TO_FOLDER:
+            // Explicit output directory, no -y so overwrite/collision prompts appear
             exe = guiExe;
-            args = L"x \"" + targetPath + L"\" -o*";
+            args = L"x -o\"" + std::wstring(parentDir) + L"\\" + baseName + L"\\\" -- \"" + targetPath + L"\"";
             break;
         case ACTION_TEST:
             exe = guiExe;
-            args = L"t \"" + targetPath + L"\"";
+            args = L"t -- \"" + targetPath + L"\"";
             break;
         case ACTION_ADD_FILES:
             exe = guiExe;
-            args = L"a -ad \"" + targetPath + L"\"";
+            args = L"a -ad -- \"" + targetPath + L"\"";
             break;
         case ACTION_ADD_7Z:
             exe = guiExe;
-            args = L"a -t7z \"" + std::wstring(parentDir) + L"\\" + baseName + L".7z\" \"" + targetPath + L"\"";
+            args = L"a -t7z \"" + std::wstring(parentDir) + L"\\" + baseName + L".7z\" -- \"" + targetPath + L"\"";
             break;
         case ACTION_ADD_ZIP:
             exe = guiExe;
-            args = L"a -tzip \"" + std::wstring(parentDir) + L"\\" + baseName + L".zip\" \"" + targetPath + L"\"";
+            args = L"a -tzip \"" + std::wstring(parentDir) + L"\\" + baseName + L".zip\" -- \"" + targetPath + L"\"";
             break;
         case ACTION_CRC:
             exe = guiExe;
-            args = (m_extraParam == L"*") ? (L"h \"" + targetPath + L"\"") : (L"h -scrc" + m_extraParam + L" \"" + targetPath + L"\"");
+            args = (m_extraParam == L"*") ? (L"h -- \"" + targetPath + L"\"") : (L"h -scrc" + m_extraParam + L" -- \"" + targetPath + L"\"");
             break;
         }
 
@@ -264,6 +269,7 @@ public:
     }
 };
 
+// Flat NanaZip Style Enumerator
 class SevenZipEnumCommands : public IEnumExplorerCommand
 {
     LONG m_cRef = 1;
@@ -275,30 +281,39 @@ public:
         DWORD userFlags = Read7ZipConfiguredFlags();
         DWORD hashMask = ReadInstalledHashMask();
 
+        // 1. Open archive
         if (userFlags & N7zFlags::kOpen)
             m_commands.push_back(new SevenZipChildCommand(ACTION_OPEN, L"Open archive"));
 
+        // 2. Extract files...
         if (userFlags & N7zFlags::kExtract)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_FILES, L"Extract files..."));
 
+        // 3. Extract Here
         if (userFlags & N7zFlags::kExtractHere)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here"));
 
+        // 4. Extract to <Folder>\
         if (userFlags & N7zFlags::kExtractTo)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to folder"));
 
+        // 5. Test archive
         if (userFlags & N7zFlags::kTest)
             m_commands.push_back(new SevenZipChildCommand(ACTION_TEST, L"Test archive"));
 
+        // 6. Add to archive...
         if (userFlags & N7zFlags::kCompress)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_FILES, L"Add to archive..."));
 
+        // 7. Add to <Archive>.7z
         if (userFlags & N7zFlags::kCompressTo7z)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to 7z"));
 
+        // 8. Add to <Archive>.zip
         if (userFlags & N7zFlags::kCompressToZip)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to zip"));
 
+        // Add separating bar ONLY if at least one hash option is selected
         bool hasAnyHash = (hashMask & 0x1F) != 0;
         if (hasAnyHash) {
             m_commands.push_back(new SevenZipSeparatorCommand());
@@ -351,6 +366,7 @@ public:
     IFACEMETHODIMP Clone(IEnumExplorerCommand** ppenum) override { if (ppenum) *ppenum = nullptr; return E_NOTIMPL; }
 };
 
+// Parent "7-Zip >" Command
 class SevenZipCommand : public IExplorerCommand, public IObjectWithSelection
 {
     LONG m_cRef = 1;
@@ -398,6 +414,7 @@ public:
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (!pguid) return E_POINTER; *pguid = CLSID_SevenZipCommand; return S_OK; }
 
+    // Hides from classic context menu (fOkToBeSlow == FALSE is classic menu)
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState) override {
         if (!pCmdState) return E_POINTER;
         if (!fOkToBeSlow) {
