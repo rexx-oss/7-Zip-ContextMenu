@@ -4,6 +4,7 @@
 #include <shellapi.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -155,23 +156,22 @@ class SevenZipEnumCommands : public IEnumExplorerCommand
 
 public:
     SevenZipEnumCommands(const std::wstring& targetPath) {
-        LPCWSTR ext = PathFindExtensionW(targetPath.c_str());
-        BOOL isDir = targetPath.empty() ? FALSE : PathIsDirectoryW(targetPath.c_str());
-        
         LPCWSTR fileName = PathFindFileNameW(targetPath.c_str());
         WCHAR baseName[MAX_PATH] = { 0 };
         wcscpy_s(baseName, fileName);
         PathRemoveExtensionW(baseName);
 
-        // Always provide the base commands
+        // Fixed: clean std::wstring conversion
+        std::wstring strBase = (baseName[0] != L'\0') ? baseName : L"archive";
+
         m_commands.push_back(new SevenZipChildCommand(ACTION_OPEN, L"Open archive", ECS_ENABLED));
         m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_FILES, L"Extract files...", ECS_ENABLED));
         m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to \"" + std::wstring(baseName.length() ? baseName : L"folder") + L"\\\"", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to \"" + strBase + L"\\\"", ECS_ENABLED));
         m_commands.push_back(new SevenZipChildCommand(ACTION_TEST, L"Test archive", ECS_ENABLED));
         m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_FILES, L"Add to archive...", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to \"" + std::wstring(baseName.length() ? baseName : L"archive") + L".7z\"", ECS_ENABLED));
-        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to \"" + std::wstring(baseName.length() ? baseName : L"archive") + L".zip\"", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to \"" + strBase + L".7z\"", ECS_ENABLED));
+        m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to \"" + strBase + L".zip\"", ECS_ENABLED));
     }
 
     ~SevenZipEnumCommands() {
