@@ -8,7 +8,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 if (-not $ScriptDir) { $ScriptDir = $PSScriptRoot }
 
 Write-Host "=============================================" -ForegroundColor DarkCyan
-Write-Host "       7-Zip Context Menu Installer          " -ForegroundColor White
+Write-Host "        7zip-contextmenu Installer           " -ForegroundColor White
 Write-Host "=============================================" -ForegroundColor DarkCyan
 
 # Prompt user for Hash options
@@ -38,11 +38,11 @@ if ($hashAns -notmatch '^[Nn]') {
     }
 }
 
-# Save configuration to registry for the DLL to read
-reg add "HKCU\Software\7-Zip-ContextMenu" /v "HashMask" /t REG_DWORD /d $hashMask /f | Out-Null
+# Save configuration for the DLL
+reg add "HKCU\Software\7zip-contextmenu" /v "HashMask" /t REG_DWORD /d $hashMask /f | Out-Null
 
 Write-Host "`n1. Installing Certificate..." -ForegroundColor Cyan
-$certPath = Join-Path $ScriptDir "7-Zip-ContextMenu.cer"
+$certPath = Join-Path $ScriptDir "7zip-contextmenu.cer"
 Import-Certificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null
 
 Write-Host "2. Installing directly to WindowsApps..." -ForegroundColor Cyan
@@ -53,5 +53,5 @@ Write-Host "3. Restarting Explorer..." -ForegroundColor Cyan
 taskkill /f /im explorer.exe 2>$null
 Start-Process explorer.exe
 
-Write-Host "`nInstalled cleanly inside C:\Program Files\WindowsApps!" -ForegroundColor Green
+Write-Host "`nInstalled cleanly inside C:\Program Files\WindowsApps\7zip-contextmenu_...!" -ForegroundColor Green
 Write-Host "You can now safely delete the downloaded folder." -ForegroundColor Yellow
