@@ -16,26 +16,19 @@
 static const CLSID CLSID_SevenZipCommand = 
     { 0x7b8933a1, 0x1372, 0x4bd1, { 0x9f, 0x25, 0x8b, 0x27, 0x35, 0x7f, 0x7e, 0x64 } };
 
-// Exact 7-Zip internal ContextMenuFlags bitmask from 7-Zip source code
 namespace N7zFlags {
-    const UINT32 kExtract          = 1 << 0;  // Extract files...
-    const UINT32 kExtractHere      = 1 << 1;  // Extract Here
-    const UINT32 kExtractTo        = 1 << 2;  // Extract to <Folder>
-    const UINT32 kTest             = 1 << 4;  // Test archive
-    const UINT32 kOpen             = 1 << 5;  // Open archive
-    const UINT32 kOpenAs           = 1 << 6;  // Open archive >
-    const UINT32 kCompress         = 1 << 8;  // Add to archive...
-    const UINT32 kCompressTo7z     = 1 << 9;  // Add to <Archive>.7z
-    const UINT32 kCompressEmail    = 1 << 10; // Compress and email...
-    const UINT32 kCompressTo7zEmail= 1 << 11; // Compress to <Archive>.7z and email
-    const UINT32 kCompressToZip    = 1 << 12; // Add to <Archive>.zip
-    const UINT32 kCompressToZipEmail=1 << 13; // Compress to <Archive>.zip and email
-    const UINT32 kHash             = 1 << 14; // CRC SHA >
+    const UINT32 kExtract     = 1 << 0;  // Extract files...
+    const UINT32 kExtractHere = 1 << 1;  // Extract Here
+    const UINT32 kExtractTo   = 1 << 2;  // Extract to <Folder>
+    const UINT32 kTest        = 1 << 4;  // Test archive
+    const UINT32 kOpen        = 1 << 5;  // Open archive
+    const UINT32 kCompress    = 1 << 8;  // Add to archive...
+    const UINT32 kCompressTo7z= 1 << 9;  // Add to <Archive>.7z
+    const UINT32 kCompressToZip=1 << 12; // Add to <Archive>.zip
 }
 
 enum SevenZipAction {
     ACTION_OPEN,
-    ACTION_OPEN_TYPE,
     ACTION_EXTRACT_FILES,
     ACTION_EXTRACT_HERE,
     ACTION_EXTRACT_TO_FOLDER,
@@ -67,7 +60,21 @@ DWORD Read7ZipConfiguredFlags() {
     return flags;
 }
 
-// Extracts base name dynamically from selection
+// Reads user hash choices configured during installation
+DWORD ReadInstalledHashMask() {
+    DWORD mask = 0x1F; // Default all 5 enabled
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\7-Zip-ContextMenu", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD data = 0;
+        DWORD size = sizeof(data);
+        if (RegQueryValueExW(hKey, L"HashMask", nullptr, nullptr, (LPBYTE)&data, &size) == ERROR_SUCCESS) {
+            mask = data;
+        }
+        RegCloseKey(hKey);
+    }
+    return mask;
+}
+
 std::wstring GetBaseNameFromItems(IShellItemArray* psiItemArray) {
     if (!psiItemArray) return L"";
     DWORD count = 0;
@@ -88,7 +95,6 @@ std::wstring GetBaseNameFromItems(IShellItemArray* psiItemArray) {
     return baseName;
 }
 
-// Generic Simple Command
 class SevenZipChildCommand : public IExplorerCommand
 {
     LONG m_cRef = 1;
@@ -115,7 +121,7 @@ public:
         return cRef;
     }
 
-    // Dynamically formats the title with the actual selected file/folder name
+    // Dynamic title for folder/file names
     IFACEMETHODIMP GetTitle(IShellItemArray* psiItemArray, PWSTR* ppszName) override {
         if (m_action == ACTION_EXTRACT_TO_FOLDER || m_action == ACTION_ADD_7Z || m_action == ACTION_ADD_ZIP) {
             std::wstring baseName = GetBaseNameFromItems(psiItemArray);
@@ -185,10 +191,6 @@ public:
             exe = fmExe;
             args = L"\"" + targetPath + L"\"";
             break;
-        case ACTION_OPEN_TYPE:
-            exe = fmExe;
-            args = L"-t" + m_extraParam + L" \"" + targetPath + L"\"";
-            break;
         case ACTION_EXTRACT_FILES:
             exe = guiExe;
             args = L"x -ad -- \"" + targetPath + L"\"";
@@ -228,111 +230,7 @@ public:
     }
 };
 
-// Generic Vector Enumerator
-class GenericEnumCommands : public IEnumExplorerCommand
-{
-    LONG m_cRef = 1;
-    ULONG m_index = 0;
-    std::vector<IExplorerCommand*> m_commands;
-
-public:
-    GenericEnumCommands(const std::vector<IExplorerCommand*>& commands) : m_commands(commands) {}
-    ~GenericEnumCommands() {
-        for (auto cmd : m_commands) cmd->Release();
-    }
-
-    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
-        static const QITAB qit[] = {
-            QITABENT(GenericEnumCommands, IEnumExplorerCommand),
-            { 0 },
-        };
-        return QISearch(this, qit, riid, ppv);
-    }
-    IFACEMETHODIMP_(ULONG) AddRef() override { return InterlockedIncrement(&m_cRef); }
-    IFACEMETHODIMP_(ULONG) Release() override {
-        LONG cRef = InterlockedDecrement(&m_cRef);
-        if (cRef == 0) delete this;
-        return cRef;
-    }
-
-    IFACEMETHODIMP Next(ULONG celt, IExplorerCommand** pUICommand, ULONG* pceltFetched) override {
-        ULONG fetched = 0;
-        if (pceltFetched) *pceltFetched = 0;
-        if (!pUICommand) return E_POINTER;
-
-        while (m_index < m_commands.size() && fetched < celt) {
-            pUICommand[fetched] = m_commands[m_index];
-            pUICommand[fetched]->AddRef();
-            fetched++;
-            m_index++;
-        }
-        if (pceltFetched) *pceltFetched = fetched;
-        return (fetched == celt) ? S_OK : S_FALSE;
-    }
-    IFACEMETHODIMP Skip(ULONG celt) override {
-        m_index = (std::min)((ULONG)m_commands.size(), m_index + celt);
-        return (m_index < m_commands.size()) ? S_OK : S_FALSE;
-    }
-    IFACEMETHODIMP Reset() override { m_index = 0; return S_OK; }
-    IFACEMETHODIMP Clone(IEnumExplorerCommand** ppenum) override { if (ppenum) *ppenum = nullptr; return E_NOTIMPL; }
-};
-
-// Cascading Submenu Parent (For "Open archive >" and "CRC SHA >")
-class CascadingSubmenuCommand : public IExplorerCommand
-{
-    LONG m_cRef = 1;
-    std::wstring m_title;
-    std::vector<IExplorerCommand*> m_children;
-
-public:
-    CascadingSubmenuCommand(const std::wstring& title, const std::vector<IExplorerCommand*>& children)
-        : m_title(title), m_children(children) {}
-
-    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
-        static const QITAB qit[] = {
-            QITABENT(CascadingSubmenuCommand, IExplorerCommand),
-            { 0 },
-        };
-        return QISearch(this, qit, riid, ppv);
-    }
-    IFACEMETHODIMP_(ULONG) AddRef() override { return InterlockedIncrement(&m_cRef); }
-    IFACEMETHODIMP_(ULONG) Release() override {
-        LONG cRef = InterlockedDecrement(&m_cRef);
-        if (cRef == 0) {
-            for (auto c : m_children) c->Release();
-            delete this;
-        }
-        return cRef;
-    }
-
-    IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* ppszName) override { return SHStrDupW(m_title.c_str(), ppszName); }
-    IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* ppszIcon) override {
-        if (ppszIcon) *ppszIcon = nullptr;
-        return E_NOTIMPL;
-    }
-    IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
-    IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (pguid) *pguid = GUID_NULL; return S_OK; }
-    IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE* pCmdState) override {
-        if (!pCmdState) return E_POINTER;
-        *pCmdState = ECS_ENABLED;
-        return S_OK;
-    }
-    IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override {
-        if (!pFlags) return E_POINTER;
-        *pFlags = ECF_HASSUBCOMMANDS;
-        return S_OK;
-    }
-    IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override {
-        if (!ppEnum) return E_POINTER;
-        std::vector<IExplorerCommand*> copies = m_children;
-        for (auto c : copies) c->AddRef();
-        *ppEnum = new GenericEnumCommands(copies);
-        return S_OK;
-    }
-    IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { return S_OK; }
-};
-
-// Top Level 7-Zip Menu Enumerator
+// Flat Enumerator (NanaZip style flat list)
 class SevenZipEnumCommands : public IEnumExplorerCommand
 {
     LONG m_cRef = 1;
@@ -342,62 +240,46 @@ class SevenZipEnumCommands : public IEnumExplorerCommand
 public:
     SevenZipEnumCommands() {
         DWORD userFlags = Read7ZipConfiguredFlags();
+        DWORD hashMask = ReadInstalledHashMask();
 
         // 1. Open archive
         if (userFlags & N7zFlags::kOpen)
             m_commands.push_back(new SevenZipChildCommand(ACTION_OPEN, L"Open archive"));
 
-        // 2. Open archive > (True cascading submenu matching Image 1)
-        if (userFlags & N7zFlags::kOpenAs) {
-            std::vector<IExplorerCommand*> openSub;
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"*", L"*"));
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"#", L"#"));
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"#:e", L"#:e"));
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"7z", L"7z"));
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"zip", L"zip"));
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"cab", L"cab"));
-            openSub.push_back(new SevenZipChildCommand(ACTION_OPEN_TYPE, L"rar", L"rar"));
-            m_commands.push_back(new CascadingSubmenuCommand(L"Open archive", openSub));
-        }
-
-        // 3. Extract files...
+        // 2. Extract files...
         if (userFlags & N7zFlags::kExtract)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_FILES, L"Extract files..."));
 
-        // 4. Extract Here
+        // 3. Extract Here
         if (userFlags & N7zFlags::kExtractHere)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_HERE, L"Extract Here"));
 
-        // 5. Extract to <Folder>\ (Dynamic title)
+        // 4. Extract to <Folder>\
         if (userFlags & N7zFlags::kExtractTo)
             m_commands.push_back(new SevenZipChildCommand(ACTION_EXTRACT_TO_FOLDER, L"Extract to folder"));
 
-        // 6. Test archive
+        // 5. Test archive
         if (userFlags & N7zFlags::kTest)
             m_commands.push_back(new SevenZipChildCommand(ACTION_TEST, L"Test archive"));
 
-        // 7. Add to archive...
+        // 6. Add to archive...
         if (userFlags & N7zFlags::kCompress)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_FILES, L"Add to archive..."));
 
-        // 8. Add to <Archive>.7z (Dynamic title)
+        // 7. Add to <Archive>.7z
         if (userFlags & N7zFlags::kCompressTo7z)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_7Z, L"Add to 7z"));
 
-        // 9. Add to <Archive>.zip (Dynamic title)
+        // 8. Add to <Archive>.zip
         if (userFlags & N7zFlags::kCompressToZip)
             m_commands.push_back(new SevenZipChildCommand(ACTION_ADD_ZIP, L"Add to zip"));
 
-        // 10. CRC SHA > (True cascading submenu)
-        if (userFlags & N7zFlags::kHash) {
-            std::vector<IExplorerCommand*> crcSub;
-            crcSub.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-32", L"CRC32"));
-            crcSub.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-64", L"CRC64"));
-            crcSub.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-1", L"SHA1"));
-            crcSub.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-256", L"SHA256"));
-            crcSub.push_back(new SevenZipChildCommand(ACTION_CRC, L"*", L"*"));
-            m_commands.push_back(new CascadingSubmenuCommand(L"CRC SHA", crcSub));
-        }
+        // Flat CRC / SHA options (Configured during install)
+        if (hashMask & (1 << 0)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-32", L"CRC32"));
+        if (hashMask & (1 << 1)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"CRC-64", L"CRC64"));
+        if (hashMask & (1 << 2)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-1", L"SHA1"));
+        if (hashMask & (1 << 3)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"SHA-256", L"SHA256"));
+        if (hashMask & (1 << 4)) m_commands.push_back(new SevenZipChildCommand(ACTION_CRC, L"*", L"*"));
     }
 
     ~SevenZipEnumCommands() {
@@ -440,7 +322,7 @@ public:
     IFACEMETHODIMP Clone(IEnumExplorerCommand** ppenum) override { if (ppenum) *ppenum = nullptr; return E_NOTIMPL; }
 };
 
-// Top Level "7-Zip >" Command
+// Parent "7-Zip >" Command
 class SevenZipCommand : public IExplorerCommand, public IObjectWithSelection
 {
     LONG m_cRef = 1;
@@ -488,7 +370,7 @@ public:
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (!pguid) return E_POINTER; *pguid = CLSID_SevenZipCommand; return S_OK; }
 
-    // HIDES FROM CLASSIC CONTEXT MENU (fOkToBeSlow == FALSE is classic menu)
+    // HIDES FROM CLASSIC CONTEXT MENU
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState) override {
         if (!pCmdState) return E_POINTER;
         if (!fOkToBeSlow) {
