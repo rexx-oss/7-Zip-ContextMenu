@@ -1,0 +1,35 @@
+name: Release 7-Zip-ContextMenu
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Existing Artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-files
+          gh run download -n 7-Zip-ContextMenu -D release-files
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ inputs.tag }}" release-files/7-Zip-ContextMenu.zip \
+            --title "${{ inputs.tag }}" \
+            --notes "Release ${{ inputs.tag }}"
