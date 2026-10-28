@@ -78,10 +78,12 @@ DWORD ReadInstalledHashMask() {
     return mask;
 }
 
+// Extracts base name dynamically: item name for 1 item, parent directory name for multiple items
 std::wstring GetBaseNameFromItems(IShellItemArray* psiItemArray) {
     if (!psiItemArray) return L"";
     DWORD count = 0;
     if (FAILED(psiItemArray->GetCount(&count)) || count == 0) return L"";
+    
     IShellItem* item = nullptr;
     if (FAILED(psiItemArray->GetItemAt(0, &item))) return L"";
     PWSTR rawPath = nullptr;
@@ -89,13 +91,26 @@ std::wstring GetBaseNameFromItems(IShellItemArray* psiItemArray) {
         item->Release();
         return L"";
     }
-    LPCWSTR fileName = PathFindFileNameW(rawPath);
-    WCHAR baseName[MAX_PATH] = { 0 };
-    wcscpy_s(baseName, fileName);
-    PathRemoveExtensionW(baseName);
+
+    std::wstring result;
+    if (count == 1) {
+        LPCWSTR fileName = PathFindFileNameW(rawPath);
+        WCHAR baseName[MAX_PATH] = { 0 };
+        wcscpy_s(baseName, fileName);
+        PathRemoveExtensionW(baseName);
+        result = baseName;
+    } else {
+        // Multiple items: use the parent directory's folder name
+        WCHAR parentDir[MAX_PATH] = { 0 };
+        wcscpy_s(parentDir, rawPath);
+        PathRemoveFileSpecW(parentDir);
+        LPCWSTR folderName = PathFindFileNameW(parentDir);
+        result = (folderName && folderName[0] != L'\0') ? folderName : L"archive";
+    }
+
     CoTaskMemFree(rawPath);
     item->Release();
-    return baseName;
+    return result;
 }
 
 // Separator command
@@ -149,6 +164,13 @@ public:
 
     IFACEMETHODIMP GetTitle(IShellItemArray* psiItemArray, PWSTR* ppszName) override {
         if (m_action == ACTION_EXTRACT_TO_FOLDER || m_action == ACTION_ADD_7Z || m_action == ACTION_ADD_ZIP) {
+            DWORD count = 0;
+            if (psiItemArray) psiItemArray->GetCount(&count);
+
+            if (m_action == ACTION_EXTRACT_TO_FOLDER && count > 1) {
+                return SHStrDupW(L"Extract to \"*\\\"", ppszName);
+            }
+
             std::wstring baseName = GetBaseNameFromItems(psiItemArray);
             if (baseName.empty()) baseName = L"archive";
 
@@ -184,70 +206,126 @@ public:
         psiItemArray->GetCount(&count);
         if (count == 0) return S_OK;
 
-        IShellItem* item = nullptr;
-        if (FAILED(psiItemArray->GetItemAt(0, &item))) return S_OK;
-
-        PWSTR rawPath = nullptr;
-        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath))) {
-            item->Release();
-            return S_OK;
+        // Collect ALL selected file paths
+        std::vector<std::wstring> allPaths;
+        for (DWORD i = 0; i < count; ++i) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(psiItemArray->GetItemAt(i, &item))) {
+                PWSTR rawPath = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath))) {
+                    allPaths.push_back(rawPath);
+                    CoTaskMemFree(rawPath);
+                }
+                item->Release();
+            }
         }
-
-        std::wstring targetPath = rawPath;
-        CoTaskMemFree(rawPath);
-        item->Release();
+        if (allPaths.empty()) return S_OK;
 
         WCHAR parentDir[MAX_PATH] = { 0 };
-        wcscpy_s(parentDir, targetPath.c_str());
+        wcscpy_s(parentDir, allPaths[0].c_str());
         PathRemoveFileSpecW(parentDir);
 
-        LPCWSTR fileName = PathFindFileNameW(targetPath.c_str());
-        WCHAR baseName[MAX_PATH] = { 0 };
-        wcscpy_s(baseName, fileName);
-        PathRemoveExtensionW(baseName);
+        std::wstring baseName;
+        if (allPaths.size() == 1) {
+            LPCWSTR fileName = PathFindFileNameW(allPaths[0].c_str());
+            WCHAR bName[MAX_PATH] = { 0 };
+            wcscpy_s(bName, fileName);
+            PathRemoveExtensionW(bName);
+            baseName = bName;
+        } else {
+            LPCWSTR folderName = PathFindFileNameW(parentDir);
+            baseName = (folderName && folderName[0] != L'\0') ? folderName : L"archive";
+        }
 
         std::wstring fmExe = Get7ZipPath(L"7zFM.exe");
         std::wstring guiExe = Get7ZipPath(L"7zG.exe");
-        std::wstring exe;
+
+        // 1. Extraction / Testing actions: process each archive
+        if (m_action == ACTION_EXTRACT_FILES || m_action == ACTION_EXTRACT_HERE || 
+            m_action == ACTION_EXTRACT_TO_FOLDER || m_action == ACTION_TEST || m_action == ACTION_OPEN) {
+            
+            for (const auto& targetPath : allPaths) {
+                std::wstring exe, args;
+                switch (m_action) {
+                case ACTION_OPEN:
+                    exe = fmExe;
+                    args = L"\"" + targetPath + L"\"";
+                    break;
+                case ACTION_EXTRACT_FILES:
+                    exe = guiExe;
+                    args = L"x -ad \"" + targetPath + L"\"";
+                    break;
+                case ACTION_EXTRACT_HERE:
+                    exe = guiExe;
+                    args = L"x \"" + targetPath + L"\"";
+                    break;
+                case ACTION_EXTRACT_TO_FOLDER:
+                    exe = guiExe;
+                    args = L"x \"" + targetPath + L"\" -o*";
+                    break;
+                case ACTION_TEST:
+                    exe = guiExe;
+                    args = L"t \"" + targetPath + L"\"";
+                    break;
+                }
+                ShellExecuteW(nullptr, L"open", exe.c_str(), args.c_str(), parentDir, SW_SHOWNORMAL);
+            }
+            return S_OK;
+        }
+
+        // 2. Archiving & Checksum actions: process all files together
+        std::wstring allTargets;
+        for (const auto& path : allPaths) {
+            if (!allTargets.empty()) allTargets += L" ";
+            allTargets += L"\"" + path + L"\"";
+        }
+
+        std::wstring tempFilePath;
+        // If hundreds of files are selected, use a temporary UTF-8 @listfile to prevent command-line overflow
+        if (allTargets.length() > 28000) {
+            WCHAR tempDir[MAX_PATH];
+            GetTempPathW(MAX_PATH, tempDir);
+            WCHAR tempFile[MAX_PATH];
+            if (GetTempFileNameW(tempDir, L"7z", 0, tempFile) != 0) {
+                tempFilePath = tempFile;
+                HANDLE hFile = CreateFileW(tempFile, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    const unsigned char bom[] = { 0xEF, 0xBB, 0xBF };
+                    DWORD written = 0;
+                    WriteFile(hFile, bom, sizeof(bom), &written, nullptr);
+                    for (const auto& path : allPaths) {
+                        int utf8Len = WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+                        if (utf8Len > 0) {
+                            std::vector<char> utf8Buf(utf8Len);
+                            WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, utf8Buf.data(), utf8Len, nullptr, nullptr);
+                            WriteFile(hFile, utf8Buf.data(), utf8Len - 1, &written, nullptr);
+                            WriteFile(hFile, "\r\n", 2, &written, nullptr);
+                        }
+                    }
+                    CloseHandle(hFile);
+                    allTargets = L"@\"" + tempFilePath + L"\"";
+                }
+            }
+        }
+
+        std::wstring exe = guiExe;
         std::wstring args;
 
         switch (m_action) {
-        case ACTION_OPEN:
-            exe = fmExe;
-            args = L"\"" + targetPath + L"\"";
-            break;
-        case ACTION_EXTRACT_FILES:
-            exe = guiExe;
-            args = L"x -ad \"" + targetPath + L"\"";
-            break;
-        case ACTION_EXTRACT_HERE:
-            exe = guiExe;
-            args = L"x \"" + targetPath + L"\"";
-            break;
-        case ACTION_EXTRACT_TO_FOLDER:
-            exe = guiExe;
-            args = L"x \"" + targetPath + L"\" -o*";
-            break;
-        case ACTION_TEST:
-            exe = guiExe;
-            args = L"t \"" + targetPath + L"\"";
-            break;
         case ACTION_ADD_FILES:
-            exe = guiExe;
-            args = L"a -ad \"" + targetPath + L"\"";
+            args = L"a -ad " + allTargets;
             break;
         case ACTION_ADD_7Z:
-            exe = guiExe;
-            args = L"a -t7z \"" + std::wstring(parentDir) + L"\\" + baseName + L".7z\" \"" + targetPath + L"\"";
+            args = L"a -t7z \"" + std::wstring(parentDir) + L"\\" + baseName + L".7z\" " + allTargets;
             break;
         case ACTION_ADD_ZIP:
-            exe = guiExe;
-            args = L"a -tzip \"" + std::wstring(parentDir) + L"\\" + baseName + L".zip\" \"" + targetPath + L"\"";
+            args = L"a -tzip \"" + std::wstring(parentDir) + L"\\" + baseName + L".zip\" " + allTargets;
             break;
         case ACTION_CRC:
-            exe = guiExe;
-            args = (m_extraParam == L"*") ? (L"h \"" + targetPath + L"\"") : (L"h -scrc" + m_extraParam + L" \"" + targetPath + L"\"");
+            args = (m_extraParam == L"*") ? (L"h " + allTargets) : (L"h -scrc" + m_extraParam + L" " + allTargets);
             break;
+        default:
+            return S_OK;
         }
 
         ShellExecuteW(nullptr, L"open", exe.c_str(), args.c_str(), parentDir, SW_SHOWNORMAL);
@@ -391,7 +469,6 @@ public:
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* ppszInfo) override { if (ppszInfo) *ppszInfo = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* pguid) override { if (!pguid) return E_POINTER; *pguid = CLSID_SevenZipCommand; return S_OK; }
 
-    // Hides from classic context menu (fOkToBeSlow == FALSE is classic menu)
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState) override {
         if (!pCmdState) return E_POINTER;
         if (!fOkToBeSlow) {
