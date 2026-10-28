@@ -33,7 +33,7 @@
 
   <Applications>
     <Application Id="App"
-      Executable="cmd.exe"
+      Executable="7zFM.exe"
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="7-Zip-ContextMenu"
